@@ -26,6 +26,9 @@ import sys
 import math
 from glob import glob
 import platform
+import imutils
+from collections import deque
+import time
 
 # -----------------------
 # Arguments
@@ -49,7 +52,7 @@ args = parser.parse_args()
 # -----------------------
 MODE_FACE_TEXTURE = 0
 MODE_ORANGE_CIRCLE = 1
-current_mode = MODE_FACE_TEXTURE
+current_mode = MODE_ORANGE_CIRCLE
 
 # -----------------------
 # Load canonical UV & triangles from local files
@@ -219,7 +222,7 @@ def affine_warp_triangle(src_img, dst_img, src_tri, dst_tri, use_gpu_local=False
 # -----------------------
 # Orange circle detection and crosshair drawing
 # -----------------------
-def detect_orange_circles(frame):
+def detect_colored_circles(frame):
     """
     Detect orange circles in the frame and return their centers and radii.
     Returns: list of (center_x, center_y, radius)
@@ -229,10 +232,10 @@ def detect_orange_circles(frame):
     
     # Define range for orange color in HSV
     # Orange is typically around 10-20 in Hue (0-180 range in OpenCV)
-    lower_orange1 = np.array([0, 100, 100])
-    upper_orange1 = np.array([20, 255, 255])
-    lower_orange2 = np.array([160, 100, 100])  # Also catch reddish-orange
-    upper_orange2 = np.array([180, 255, 255])
+    lower_orange1 = np.array([100, 100, 100])
+    upper_orange1 = np.array([255, 255, 255])
+    lower_orange2 = np.array([150, 100, 100])  # Also catch reddish-orange
+    upper_orange2 = np.array([255, 215, 215])
     
     # Create masks for orange
     mask1 = cv2.inRange(hsv, lower_orange1, upper_orange1)
@@ -273,6 +276,87 @@ def detect_orange_circles(frame):
     
     return circles
 
+def detect_circles_color_based(frame, color_ranges=None):
+    """
+    Detect circles in specified color ranges.
+    If color_ranges is None, uses default ranges for common colors.
+    
+    color_ranges: List of [(lower_hsv, upper_hsv), ...]
+    Returns: list of (center_x, center_y, radius, color_index)
+    """
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    
+    # Default color ranges if none provided
+    if color_ranges is None:
+        color_ranges = [
+            # Red (two ranges because red wraps around 0)
+            (np.array([0, 100, 100]), np.array([10, 255, 255])),
+            (np.array([170, 100, 100]), np.array([180, 255, 255])),
+            # Green
+            (np.array([40, 100, 100]), np.array([80, 255, 255])),
+            # Blue
+            (np.array([100, 100, 100]), np.array([130, 255, 255])),
+            # Yellow
+            (np.array([20, 100, 100]), np.array([40, 255, 255])),
+            # white
+            (np.array([100, 100, 100]), np.array([255, 255, 255])),
+        ]
+    
+    combined_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+    
+    for lower, upper in color_ranges:
+        mask = cv2.inRange(hsv, lower, upper)
+        combined_mask = cv2.bitwise_or(combined_mask, mask)
+    
+    # Apply morphological operations
+    kernel = np.ones((5, 5), np.uint8)
+    combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel)
+    combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel)
+    
+    # Find contours
+    contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    circles = []
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area < 100:
+            continue
+            
+        (x, y), radius = cv2.minEnclosingCircle(contour)
+        
+        perimeter = cv2.arcLength(contour, True)
+        if perimeter == 0:
+            continue
+        circularity = 4 * np.pi * area / (perimeter * perimeter)
+        
+        if circularity < 0.6:
+            continue
+            
+        if args.min_radius <= radius <= args.max_radius:
+            circles.append((int(x), int(y), int(radius)))
+    
+    return circles
+
+def detect_circle(frame):
+    orig_h, orig_w = frame.shape[:2]
+    # frame = imutils.resize(frame, width=600)
+    blurred = cv2.GaussianBlur(frame, (11,11), 0)
+    hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, np.array((0., 60.,32.)), np.array((180.,255.,255.)))
+    mask = cv2.erode(mask, None, iterations=2)
+    mask = cv2.dilate(mask, None, iterations=2)
+    cnts = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cnts = imutils.grab_contours(cnts)
+    center = None
+    if len(cnts) > 0:
+        c = max(cnts, key=cv2.contourArea)
+        ((x, y), radius) = cv2.minEnclosingCircle(c)
+        M = cv2.moments(c)
+        center = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
+        if radius > 10:
+            return [(int(x), int(y), int(radius))]
+    return []
+
 def draw_crosshair_target(frame, center_x, center_y, radius, color=(0, 255, 0), thickness=3):
     """
     Draw a crosshair target around the detected circle.
@@ -312,7 +396,7 @@ def process_orange_circle_mode(frame):
     out_frame = frame.copy()
     
     # Detect orange circles
-    circles = detect_orange_circles(frame)
+    circles = detect_colored_circles(frame)
     
     # Draw crosshair for each detected circle
     for (x, y, radius) in circles:
@@ -320,21 +404,55 @@ def process_orange_circle_mode(frame):
     
     # Display detection info
     if circles:
-        cv2.putText(out_frame, f"Orange Circles Detected: {len(circles)}", 
+        cv2.putText(out_frame, f"Circles Detected: {len(circles)}", 
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
     else:
-        cv2.putText(out_frame, "No orange circles detected", 
+        cv2.putText(out_frame, "No circles detected", 
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
     
     # Display mode info
-    cv2.putText(out_frame, "Mode: ORANGE CIRCLE DETECTION (press 'm' to switch)", 
+    cv2.putText(out_frame, "Mode: CIRCLE DETECTION (press 'm' to switch)", 
                 (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
     
     # Show instructions
-    cv2.putText(out_frame, "Hold up an orange object (ball, fruit, etc.)", 
+    cv2.putText(out_frame, "Hold up a circular object (ball, fruit, etc.)", 
                 (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
     
     return out_frame
+
+pts = deque(maxlen=100)
+def follow_circle(frame, buffer=100, colorLower=(0,0,0), colorUpper=(20,100,100)):
+    blurred = cv2.GaussianBlur(frame, (11,11), 0)
+    hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
+    low_hsv_norm = (int(colorLower[0]*255/360/2), int(colorLower[1]*255/100), int(colorLower[2]*255/100))
+    high_hsv_norm = (int(colorUpper[0]*255/360/2), int(colorUpper[1]*255/100), int(colorUpper[2]*255/100))
+    mask = cv2.inRange(hsv, low_hsv_norm, high_hsv_norm)
+    mask = cv2.erode(mask, None, iterations=2)
+    mask = cv2.dilate(mask, None, iterations=2)
+    # cv2.imshow("mask", mask)
+    cnts = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cnts = imutils.grab_contours(cnts)
+    center = None
+    if len(cnts) > 0:
+        c = max(cnts, key=cv2.contourArea)
+        ((x, y), radius) = cv2.minEnclosingCircle(c)
+        M = cv2.moments(c)
+        center = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
+        if radius > 60:
+            cv2.circle(frame, (int(x), int(y)), int(radius), (0, 255, 255), 2)
+            cv2.circle(frame, center, 5, (0, 0, 255), -1)
+
+    pts.appendleft(center)
+    for i in range(1, len(pts)):
+        if pts[i - 1] is None or pts[i] is None:
+            continue
+        thickness = int(np.sqrt(buffer/float(i + 1)) * 2.5)
+        if thickness < 0:
+            thickness = 0
+        if thickness > 50:
+            thickness = 50
+        cv2.line(frame, pts[i - 1], pts[i], (0, 0, 255), thickness)
+    return frame
 
 # -----------------------
 # Camera + writer
@@ -372,6 +490,7 @@ landmark_indices = sorted(set(landmark_indices))
 # -----------------------
 # Main loop
 # -----------------------
+hue = 0.0
 while True:
     ok, frame = cap.read()
     if not ok:
@@ -461,7 +580,9 @@ while True:
     
     elif current_mode == MODE_ORANGE_CIRCLE:
         # Orange circle detection mode
-        out_frame = process_orange_circle_mode(frame)
+        # out_frame = process_orange_circle_mode(frame)
+        # out_frame = follow_circle(frame, colorLower=(hue-5, 0, 0), colorUpper=(hue+5, 100, 100))
+        out_frame = follow_circle(frame, colorLower=(120,0,0), colorUpper=(140,100,100))
     
     # Display the result
     cv2.imshow("Face UV Wrap & Orange Circle Detection", out_frame)
@@ -476,8 +597,16 @@ while True:
     elif key == ord('m'):
         # Toggle mode
         current_mode = 1 - current_mode
-        mode_names = ["FACE TEXTURE", "ORANGE CIRCLE DETECTION"]
+        mode_names = ["FACE TEXTURE", "CIRCLE DETECTION"]
         print(f"Switched to mode: {mode_names[current_mode]}")
+    elif key == ord('y'):
+        hue = hue + 5
+        if hue > 360: hue -= 360
+        print(f"hue = {hue}")
+    elif key == ord('h'):
+        hue = hue - 5
+        if hue < 0: hue += 360
+        print(f"hue = {hue}")
     elif current_mode == MODE_FACE_TEXTURE:
         # Only process texture controls in face texture mode
         if key == ord('n'):

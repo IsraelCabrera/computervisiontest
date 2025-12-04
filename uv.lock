@@ -156,12 +156,14 @@ name = "computervision"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "imutils" },
     { name = "mediapipe" },
     { name = "requests" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "imutils", specifier = ">=0.5.4" },
     { name = "mediapipe", specifier = ">=0.10.21" },
     { name = "requests", specifier = ">=2.32.5" },
 ]
@@ -299,6 +301,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/6f/6d/0703ccc57f3a72335
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0e/61/66938bbb5fc52dbdf84594873d5b51fb1f7c7794e9c0f5bd885f30bc507b/idna-3.11-py3-none-any.whl", hash = "sha256:771a87f49d9defaf64091e6e6fe9c18d4833f140bd19464795bc32d966ca37ea", size = 71008, upload-time = "2025-10-12T14:55:18.883Z" },
 ]
+
+[[package]]
+name = "imutils"
+version = "0.5.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/3f/d3/ecb4d108f6c1041d24842a345ee0123cd7f366ba75cf122601e856d42ba2/imutils-0.5.4.tar.gz", hash = "sha256:03827a9fca8b5c540305c0844a62591cf35a0caec199cb0f2f0a4a0fb15d8f24", size = 17240, upload-time = "2021-01-15T10:53:17.816Z" }
 
 [[package]]
 name = "jax"
