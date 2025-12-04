@@ -438,20 +438,20 @@ def follow_circle(frame, buffer=100, colorLower=(0,0,0), colorUpper=(20,100,100)
         ((x, y), radius) = cv2.minEnclosingCircle(c)
         M = cv2.moments(c)
         center = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
-        if radius > 60:
+        if radius > 160:
             cv2.circle(frame, (int(x), int(y)), int(radius), (0, 255, 255), 2)
             cv2.circle(frame, center, 5, (0, 0, 255), -1)
 
-    pts.appendleft(center)
-    for i in range(1, len(pts)):
-        if pts[i - 1] is None or pts[i] is None:
-            continue
-        thickness = int(np.sqrt(buffer/float(i + 1)) * 2.5)
-        if thickness < 0:
-            thickness = 0
-        if thickness > 50:
-            thickness = 50
-        cv2.line(frame, pts[i - 1], pts[i], (0, 0, 255), thickness)
+            pts.appendleft(center)
+            for i in range(1, len(pts)):
+                if pts[i - 1] is None or pts[i] is None:
+                    continue
+                thickness = int(np.sqrt(buffer/float(i + 1)) * 2.5)
+                if thickness < 0:
+                    thickness = 0
+                if thickness > 50:
+                    thickness = 50
+                cv2.line(frame, pts[i - 1], pts[i], (0, 0, 255), thickness)
     return frame
 
 # -----------------------
@@ -582,7 +582,7 @@ while True:
         # Orange circle detection mode
         # out_frame = process_orange_circle_mode(frame)
         # out_frame = follow_circle(frame, colorLower=(hue-5, 0, 0), colorUpper=(hue+5, 100, 100))
-        out_frame = follow_circle(frame, colorLower=(120,0,0), colorUpper=(140,100,100))
+        out_frame = follow_circle(frame, colorLower=(247,0,0), colorUpper=(257,100,100))
     
     # Display the result
     cv2.imshow("Face UV Wrap & Orange Circle Detection", out_frame)
